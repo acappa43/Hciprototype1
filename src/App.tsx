@@ -25,10 +25,7 @@ export interface CustomTemplate {
 }
 
 export default function App() {
-  const [sources, setSources] = useState<Source[]>([
-    { id: 1, name: 'Course Syllabus (AI Classified)', type: 'Syllabus', checked: true, filepath: 'syllabus.pdf', content: 'Exam date is 11/30. Key Term: Estates-General (Last met 1614). Key Term: The Reign of Terror (Sept 1793 – July 1794). Grading: Essay (40%), Quiz (30%), Participation (30%).' },
-    { id: 2, name: 'Subject Notes 10/24', type: 'Notes', checked: true, filepath: 'notes_1024.txt', content: 'Key Term: National Assembly (Formed by Third Estate). Primary Cause of Revolution: Massive war debt from Seven Years War and American Revolution. Contrast: Monarchy vs Republic. Key Steps for Revolution: 1. Economic Crisis, 2. Estates-General Meeting, 3. National Assembly Formation, 4. Storming of the Bastille, 5. Reign of Terror.' },
-  ]);
+  const [sources, setSources] = useState<Source[]>([]);
 
   const [customTemplates, setCustomTemplates] = useState<CustomTemplate[]>([
     {
@@ -112,6 +109,11 @@ export default function App() {
     setSelectedTemplate(newTemplate.value);
   };
 
+  const deleteSource = (id: number) => {
+    setSources(sources.filter(s => s.id !== id));
+    showNotification('Source deleted.');
+  };
+
   return (
     <div className="h-screen flex flex-col bg-[#F9FAFB]">
       <Header onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
@@ -124,6 +126,7 @@ export default function App() {
           onToggleSource={toggleSource}
           onToggleSelectAll={toggleSelectAll}
           onFileUpload={handleFileUpload}
+          onDeleteSource={deleteSource}  // ← Add this
         />
         
         <MainContent

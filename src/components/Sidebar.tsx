@@ -1,5 +1,5 @@
 import React, { useRef } from 'react';
-import { X } from 'lucide-react';
+import { X, Trash2 } from 'lucide-react';
 import type { Source } from '../App';
 
 interface SidebarProps {
@@ -9,6 +9,7 @@ interface SidebarProps {
   onToggleSource: (id: number) => void;
   onToggleSelectAll: () => void;
   onFileUpload: (files: FileList) => void;
+  onDeleteSource: (id: number) => void;  // ← Add this
 }
 
 export function Sidebar({
@@ -17,7 +18,8 @@ export function Sidebar({
   onClose,
   onToggleSource,
   onToggleSelectAll,
-  onFileUpload
+  onFileUpload,
+  onDeleteSource  // ← Add this
 }: SidebarProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -120,6 +122,13 @@ export function Sidebar({
                 >
                   {source.type}
                 </span>
+                <button
+                  onClick={() => onDeleteSource(source.id)}
+                  className="ml-2 p-1 text-gray-400 hover:text-red-500 transition"
+                  title="Delete source"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
               </div>
             );
           })
