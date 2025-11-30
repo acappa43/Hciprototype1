@@ -1,4 +1,5 @@
 import { createPartFromUri, GoogleGenAI } from "@google/genai";
+import ReactMarkdown from "react-markdown";
 
 const genAI = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
 
@@ -55,8 +56,14 @@ export async function generateWithSources(prompt: string, sources: { name: strin
     model: "gemini-2.5-flash",
     contents,
   });
-
-  return response.text;
+  return (
+    <div>
+      {/* This component takes the string and renders proper HTML */}
+      <ReactMarkdown>
+        {response.text}
+      </ReactMarkdown>
+    </div>
+  );
 }
 
 export const response = async (prompt: string) => {
@@ -64,7 +71,14 @@ export const response = async (prompt: string) => {
     model: 'gemini-2.5-flash',
     contents: prompt,
   });
-  return response.text;
+  return (
+    <div>
+      {/* This component takes the string and renders proper HTML */}
+      <ReactMarkdown>
+        {response.text}
+      </ReactMarkdown>
+    </div>
+  );
 }
 
 export const Model = {
