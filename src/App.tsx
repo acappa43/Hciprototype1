@@ -6,6 +6,7 @@ import { TemplateModal } from './components/TemplateModal';
 import { CustomTemplateCreatorModal } from './components/CustomTemplateCreatorModal';
 import { ChatModal } from './components/ChatModal';
 import { NotificationToast } from './components/NotificationToast';
+import { Model } from './components/Model';
 
 export interface Source {
   id: number;
@@ -14,6 +15,7 @@ export interface Source {
   checked: boolean;
   filepath: string;
   content: string;
+  uploadStatus?: 'idle' | 'uploading' | 'processed' | 'failed';
 }
 
 export interface CustomTemplate {
@@ -63,23 +65,56 @@ export default function App() {
     showNotification(`All sources ${allChecked ? 'deselected' : 'selected'}.`);
   };
 
-  const handleFileUpload = (files: FileList) => {
+  const handleFileUpload = async (files: FileList) => {
+    const baseId = nextSourceId;
     const newSources: Source[] = [];
-    Array.from(files).forEach(file => {
+
+    Array.from(files).forEach((file, idx) => {
       const isSyllabus = file.name.toLowerCase().includes('syllabus') || file.name.toLowerCase().includes('exam');
       const newSource: Source = {
-        id: nextSourceId + newSources.length,
+        id: baseId + idx,
         name: file.name,
         type: isSyllabus ? 'Syllabus' : 'Notes',
         checked: true,
         filepath: file.name,
-        content: `Mock content generated for ${file.name}.`
+        content: `Uploading ${file.name}...`,
+        uploadStatus: 'uploading'
       };
       newSources.push(newSource);
     });
-    setSources([...sources, ...newSources]);
-    setNextSourceId(nextSourceId + newSources.length);
-    showNotification(`${files.length} document(s) uploaded and classified!`);
+
+    // Insert placeholders immediately
+    setSources(prev => [...prev, ...newSources]);
+    setNextSourceId(baseId + newSources.length);
+    showNotification(`Uploading ${files.length} document(s) ...`);
+
+    // Upload each file and update state (do not store remote URI in state)
+    await Promise.all(
+      Array.from(files).map(async (file, idx) => {
+        const sourceId = baseId + idx;
+        try {
+          await Model.uploadLocalFile(file);
+          setSources(prev =>
+            prev.map(s =>
+              s.id === sourceId
+                ? { ...s, content: `Processed: ${file.name}`, uploadStatus: 'processed' }
+                : s
+            )
+          );
+          showNotification(`${file.name} uploaded and processed.`);
+        } catch (err) {
+          setSources(prev =>
+            prev.map(s =>
+              s.id === sourceId
+                ? { ...s, content: `Failed to process ${file.name}`, uploadStatus: 'failed' }
+                : s
+            )
+          );
+          const errMsg = err instanceof Error ? err.message : 'Unknown error';
+          showNotification(`Failed to upload ${file.name}: ${errMsg}`, true);
+        }
+      })
+    );
   };
 
   const deleteCustomTemplate = (templateId: number) => {
