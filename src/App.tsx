@@ -26,6 +26,8 @@ export interface CustomTemplate {
   definition: string;
 }
 
+type GeneratedContent = { title: string; html: string; text: string };
+
 export default function App() {
   const [sources, setSources] = useState<Source[]>([]);
 
@@ -44,10 +46,12 @@ export default function App() {
   const [customTemplateModalOpen, setCustomTemplateModalOpen] = useState(false);
   const [chatModalOpen, setChatModalOpen] = useState(false);
   const [notification, setNotification] = useState<{ message: string; isError: boolean } | null>(null);
-  const [generatedContent, setGeneratedContent] = useState<{ title: string; html: string; text: string } | null>(null);
-  const [selectedTemplate, setSelectedTemplate] = useState('flashcards');
-  const [nextSourceId, setNextSourceId] = useState(3);
-  const [nextCustomTemplateId, setNextCustomTemplateId] = useState(9);
+  const [generatedContent, setGeneratedContent] = useState<GeneratedContent | null>(null);
+
+  const [selectedTemplate, setSelectedTemplate] = useState('');
+
+  const [nextSourceId, setNextSourceId] = useState(1);
+  const [nextCustomTemplateId, setNextCustomTemplateId] = useState(1);
 
   const showNotification = (message: string, isError: boolean = false) => {
     setNotification({ message, isError });
@@ -117,6 +121,45 @@ export default function App() {
     );
   };
 
+  const generateWithGemini = async (templateId: string) => {
+    const selectedSources = sources.filter((s) => s.checked);
+
+    if (selectedSources.length === 0) {
+      showNotification('Please select at least one document first.', true);
+      return;
+    }
+
+    try {
+      const res = await fetch('http://localhost:5001/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          templateId,
+          sources: selectedSources.map((s) => ({
+            name: s.name,
+            type: s.type,
+            content: s.content,
+          })),
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+
+      const data: GeneratedContent = await res.json();
+      setGeneratedContent({
+        title: data.title,
+        html: data.html,
+        text: data.text,
+      });
+      showNotification(`Generated with Gemini (${templateId}).`);
+    } catch (err) {
+      console.error(err);
+      showNotification('Gemini request failed. Check server.', true);
+    }
+  };
+
   const deleteCustomTemplate = (templateId: number) => {
     setCustomTemplates(customTemplates.filter(t => t.id !== templateId));
     showNotification('Custom template deleted successfully!');
@@ -184,17 +227,11 @@ export default function App() {
             setCustomTemplateModalOpen(true);
           }}
           onDeleteCustomTemplate={deleteCustomTemplate}
-          onApply={(template) => {
+          onApply={async (templateId) => {
             setTemplateModalOpen(false);
-            setGeneratedContent({
-              title: `Generated Content: ${template}`,
-              html: '',
-              text: ''
-            });
-            showNotification(`Template '${template}' applied successfully!`);
+            await generateWithGemini(templateId);
           }}
           sources={sources}
-          setGeneratedContent={setGeneratedContent}
           showNotification={showNotification}
         />
       )}
