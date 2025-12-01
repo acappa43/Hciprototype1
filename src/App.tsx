@@ -24,31 +24,24 @@ export interface CustomTemplate {
   definition: string;
 }
 
-export default function App() {
-  const [sources, setSources] = useState<Source[]>([
-    { id: 1, name: 'Course Syllabus (AI Classified)', type: 'Syllabus', checked: true, filepath: 'syllabus.pdf', content: 'Exam date is 11/30. Key Term: Estates-General (Last met 1614). Key Term: The Reign of Terror (Sept 1793 – July 1794). Grading: Essay (40%), Quiz (30%), Participation (30%).' },
-    { id: 2, name: 'Subject Notes 10/24', type: 'Notes', checked: true, filepath: 'notes_1024.txt', content: 'Key Term: National Assembly (Formed by Third Estate). Primary Cause of Revolution: Massive war debt from Seven Years War and American Revolution. Contrast: Monarchy vs Republic. Key Steps for Revolution: 1. Economic Crisis, 2. Estates-General Meeting, 3. National Assembly Formation, 4. Storming of the Bastille, 5. Reign of Terror.' },
-  ]);
+type GeneratedContent = { title: string; html: string; text: string };
 
-  const [customTemplates, setCustomTemplates] = useState<CustomTemplate[]>([
-    {
-      id: 8,
-      value: 'custom-a-team-guide-action/target/result',
-      name: 'A-Team Guide (Action/Target/Result)',
-      type: 'Custom',
-      definition: 'Generate a concise, three-part summary of the main historical event in the source material. Use the following structure, with bolded headings and short bullet points:\n\n1. A) ACTION (What was done?)\n2. T) TARGET (Who or what was the focus?)\n3. R) RESULT (What was the immediate consequence?).'
-    }
-  ]);
+export default function App() {
+  const [sources, setSources] = useState<Source[]>([]);
+
+  const [customTemplates, setCustomTemplates] = useState<CustomTemplate[]>([]);
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [templateModalOpen, setTemplateModalOpen] = useState(false);
   const [customTemplateModalOpen, setCustomTemplateModalOpen] = useState(false);
   const [chatModalOpen, setChatModalOpen] = useState(false);
   const [notification, setNotification] = useState<{ message: string; isError: boolean } | null>(null);
-  const [generatedContent, setGeneratedContent] = useState<{ title: string; html: string; text: string } | null>(null);
-  const [selectedTemplate, setSelectedTemplate] = useState('flashcards');
-  const [nextSourceId, setNextSourceId] = useState(3);
-  const [nextCustomTemplateId, setNextCustomTemplateId] = useState(9);
+  const [generatedContent, setGeneratedContent] = useState<GeneratedContent | null>(null);
+
+  const [selectedTemplate, setSelectedTemplate] = useState('');
+
+  const [nextSourceId, setNextSourceId] = useState(1);
+  const [nextCustomTemplateId, setNextCustomTemplateId] = useState(1);
 
   const showNotification = (message: string, isError: boolean = false) => {
     setNotification({ message, isError });
@@ -83,6 +76,45 @@ export default function App() {
     setSources([...sources, ...newSources]);
     setNextSourceId(nextSourceId + newSources.length);
     showNotification(`${files.length} document(s) uploaded and classified!`);
+  };
+
+  const generateWithGemini = async (templateId: string) => {
+    const selectedSources = sources.filter((s) => s.checked);
+
+    if (selectedSources.length === 0) {
+      showNotification('Please select at least one document first.', true);
+      return;
+    }
+
+    try {
+      const res = await fetch('http://localhost:5001/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          templateId,
+          sources: selectedSources.map((s) => ({
+            name: s.name,
+            type: s.type,
+            content: s.content,
+          })),
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+
+      const data: GeneratedContent = await res.json();
+      setGeneratedContent({
+        title: data.title,
+        html: data.html,
+        text: data.text,
+      });
+      showNotification(`Generated with Gemini (${templateId}).`);
+    } catch (err) {
+      console.error(err);
+      showNotification('Gemini request failed. Check server.', true);
+    }
   };
 
   const deleteCustomTemplate = (templateId: number) => {
@@ -146,17 +178,11 @@ export default function App() {
             setCustomTemplateModalOpen(true);
           }}
           onDeleteCustomTemplate={deleteCustomTemplate}
-          onApply={(template) => {
+          onApply={async (templateId) => {
             setTemplateModalOpen(false);
-            setGeneratedContent({
-              title: `Generated Content: ${template}`,
-              html: '',
-              text: ''
-            });
-            showNotification(`Template '${template}' applied successfully!`);
+            await generateWithGemini(templateId);
           }}
           sources={sources}
-          setGeneratedContent={setGeneratedContent}
           showNotification={showNotification}
         />
       )}
