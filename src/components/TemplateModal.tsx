@@ -1,7 +1,6 @@
 import React from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import type { Source, CustomTemplate } from '../App';
-import { generateTemplateContent } from './templateContent';
 
 interface TemplateModalProps {
   customTemplates: CustomTemplate[];
@@ -12,7 +11,6 @@ interface TemplateModalProps {
   onDeleteCustomTemplate: (id: number) => void;
   onApply: (template: string) => void;
   sources: Source[];
-  setGeneratedContent: (content: { title: string; html: string; text: string }) => void;
   showNotification: (message: string, isError?: boolean) => void;
 }
 
@@ -33,24 +31,24 @@ export function TemplateModal({
   onClose,
   onOpenCustomCreator,
   onDeleteCustomTemplate,
+  onApply,
   sources,
-  setGeneratedContent,
   showNotification
 }: TemplateModalProps) {
   const handleApply = () => {
+    if (!selectedTemplate) {
+      showNotification('Please select a template first.', true);
+      return;
+    }
+
     const activeSources = sources.filter(s => s.checked);
-    
     if (activeSources.length === 0) {
       showNotification('Please select at least one source document.', true);
       return;
     }
 
-    const customTemplate = customTemplates.find(t => t.value === selectedTemplate);
-    const content = generateTemplateContent(selectedTemplate, activeSources, customTemplate);
-    
-    setGeneratedContent(content);
-    onClose();
-    showNotification(`Template '${customTemplate ? customTemplate.name : selectedTemplate.toUpperCase()}' applied successfully!`);
+    // Delegate the actual generation to the parent (Gemini call in App.tsx)
+    onApply(selectedTemplate);
   };
 
   return (

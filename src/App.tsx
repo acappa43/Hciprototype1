@@ -6,7 +6,6 @@ import { TemplateModal } from './components/TemplateModal';
 import { CustomTemplateCreatorModal } from './components/CustomTemplateCreatorModal';
 import { ChatModal } from './components/ChatModal';
 import { NotificationToast } from './components/NotificationToast';
-import { Model } from './components/Model';
 
 export interface Source {
   id: number;
@@ -15,7 +14,6 @@ export interface Source {
   checked: boolean;
   filepath: string;
   content: string;
-  uploadStatus?: 'idle' | 'uploading' | 'processed' | 'failed';
 }
 
 export interface CustomTemplate {
@@ -26,28 +24,24 @@ export interface CustomTemplate {
   definition: string;
 }
 
+type GeneratedContent = { title: string; html: string; text: string };
+
 export default function App() {
   const [sources, setSources] = useState<Source[]>([]);
 
-  const [customTemplates, setCustomTemplates] = useState<CustomTemplate[]>([
-    {
-      id: 8,
-      value: 'custom-a-team-guide-action/target/result',
-      name: 'A-Team Guide (Action/Target/Result)',
-      type: 'Custom',
-      definition: 'Generate a concise, three-part summary of the main historical event in the source material. Use the following structure, with bolded headings and short bullet points:\n\n1. A) ACTION (What was done?)\n2. T) TARGET (Who or what was the focus?)\n3. R) RESULT (What was the immediate consequence?).'
-    }
-  ]);
+  const [customTemplates, setCustomTemplates] = useState<CustomTemplate[]>([]);
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [templateModalOpen, setTemplateModalOpen] = useState(false);
   const [customTemplateModalOpen, setCustomTemplateModalOpen] = useState(false);
   const [chatModalOpen, setChatModalOpen] = useState(false);
   const [notification, setNotification] = useState<{ message: string; isError: boolean } | null>(null);
-  const [generatedContent, setGeneratedContent] = useState<{ title: string; html: string; text: string } | null>(null);
-  const [selectedTemplate, setSelectedTemplate] = useState('flashcards');
-  const [nextSourceId, setNextSourceId] = useState(3);
-  const [nextCustomTemplateId, setNextCustomTemplateId] = useState(9);
+  const [generatedContent, setGeneratedContent] = useState<GeneratedContent | null>(null);
+
+  const [selectedTemplate, setSelectedTemplate] = useState('');
+
+  const [nextSourceId, setNextSourceId] = useState(1);
+  const [nextCustomTemplateId, setNextCustomTemplateId] = useState(1);
 
   const showNotification = (message: string, isError: boolean = false) => {
     setNotification({ message, isError });
@@ -65,56 +59,62 @@ export default function App() {
     showNotification(`All sources ${allChecked ? 'deselected' : 'selected'}.`);
   };
 
-  const handleFileUpload = async (files: FileList) => {
-    const baseId = nextSourceId;
+  const handleFileUpload = (files: FileList) => {
     const newSources: Source[] = [];
-
-    Array.from(files).forEach((file, idx) => {
+    Array.from(files).forEach(file => {
       const isSyllabus = file.name.toLowerCase().includes('syllabus') || file.name.toLowerCase().includes('exam');
       const newSource: Source = {
-        id: baseId + idx,
+        id: nextSourceId + newSources.length,
         name: file.name,
         type: isSyllabus ? 'Syllabus' : 'Notes',
         checked: true,
         filepath: file.name,
-        content: `Uploading ${file.name}...`,
-        uploadStatus: 'uploading'
+        content: `Mock content generated for ${file.name}.`
       };
       newSources.push(newSource);
     });
+    setSources([...sources, ...newSources]);
+    setNextSourceId(nextSourceId + newSources.length);
+    showNotification(`${files.length} document(s) uploaded and classified!`);
+  };
 
-    // Insert placeholders immediately
-    setSources(prev => [...prev, ...newSources]);
-    setNextSourceId(baseId + newSources.length);
-    showNotification(`Uploading ${files.length} document(s) ...`);
+  const generateWithGemini = async (templateId: string) => {
+    const selectedSources = sources.filter((s) => s.checked);
 
-    // Upload each file and update state (do not store remote URI in state)
-    await Promise.all(
-      Array.from(files).map(async (file, idx) => {
-        const sourceId = baseId + idx;
-        try {
-          await Model.uploadLocalFile(file);
-          setSources(prev =>
-            prev.map(s =>
-              s.id === sourceId
-                ? { ...s, content: `Processed: ${file.name}`, uploadStatus: 'processed' }
-                : s
-            )
-          );
-          showNotification(`${file.name} uploaded and processed.`);
-        } catch (err) {
-          setSources(prev =>
-            prev.map(s =>
-              s.id === sourceId
-                ? { ...s, content: `Failed to process ${file.name}`, uploadStatus: 'failed' }
-                : s
-            )
-          );
-          const errMsg = err instanceof Error ? err.message : 'Unknown error';
-          showNotification(`Failed to upload ${file.name}: ${errMsg}`, true);
-        }
-      })
-    );
+    if (selectedSources.length === 0) {
+      showNotification('Please select at least one document first.', true);
+      return;
+    }
+
+    try {
+      const res = await fetch('http://localhost:5001/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          templateId,
+          sources: selectedSources.map((s) => ({
+            name: s.name,
+            type: s.type,
+            content: s.content,
+          })),
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+
+      const data: GeneratedContent = await res.json();
+      setGeneratedContent({
+        title: data.title,
+        html: data.html,
+        text: data.text,
+      });
+      showNotification(`Generated with Gemini (${templateId}).`);
+    } catch (err) {
+      console.error(err);
+      showNotification('Gemini request failed. Check server.', true);
+    }
   };
 
   const deleteCustomTemplate = (templateId: number) => {
@@ -144,11 +144,6 @@ export default function App() {
     setSelectedTemplate(newTemplate.value);
   };
 
-  const deleteSource = (id: number) => {
-    setSources(sources.filter(s => s.id !== id));
-    showNotification('Source deleted.');
-  };
-
   return (
     <div className="h-screen flex flex-col bg-[#F9FAFB]">
       <Header onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
@@ -161,7 +156,6 @@ export default function App() {
           onToggleSource={toggleSource}
           onToggleSelectAll={toggleSelectAll}
           onFileUpload={handleFileUpload}
-          onDeleteSource={deleteSource}  // ← Add this
         />
         
         <MainContent
@@ -184,17 +178,11 @@ export default function App() {
             setCustomTemplateModalOpen(true);
           }}
           onDeleteCustomTemplate={deleteCustomTemplate}
-          onApply={(template) => {
+          onApply={async (templateId) => {
             setTemplateModalOpen(false);
-            setGeneratedContent({
-              title: `Generated Content: ${template}`,
-              html: '',
-              text: ''
-            });
-            showNotification(`Template '${template}' applied successfully!`);
+            await generateWithGemini(templateId);
           }}
           sources={sources}
-          setGeneratedContent={setGeneratedContent}
           showNotification={showNotification}
         />
       )}
