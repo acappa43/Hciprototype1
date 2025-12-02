@@ -13,8 +13,10 @@ export interface Source {
   type: 'Syllabus' | 'Notes';
   checked: boolean;
   filepath: string;
-  content: string;
+  content: string;       // for plain text docs (txt, md, etc.)
+  rawData?: string;      // for PDFs: base64 data URL
 }
+
 
 export interface CustomTemplate {
   id: number;
@@ -38,7 +40,8 @@ export default function App() {
   const [notification, setNotification] = useState<{ message: string; isError: boolean } | null>(null);
   const [generatedContent, setGeneratedContent] = useState<GeneratedContent | null>(null);
 
-  const [selectedTemplate, setSelectedTemplate] = useState('');
+  const [selectedTemplate, setSelectedTemplate] = useState('study-guide');
+
 
   const [nextSourceId, setNextSourceId] = useState(1);
   const [nextCustomTemplateId, setNextCustomTemplateId] = useState(1);
@@ -60,23 +63,78 @@ export default function App() {
   };
 
   const handleFileUpload = (files: FileList) => {
-    const newSources: Source[] = [];
-    Array.from(files).forEach(file => {
-      const isSyllabus = file.name.toLowerCase().includes('syllabus') || file.name.toLowerCase().includes('exam');
-      const newSource: Source = {
-        id: nextSourceId + newSources.length,
-        name: file.name,
-        type: isSyllabus ? 'Syllabus' : 'Notes',
-        checked: true,
-        filepath: file.name,
-        content: `Mock content generated for ${file.name}.`
+  const fileArray = Array.from(files);
+
+  const processFile = (file: File, index: number): Promise<Source> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      const lowerName = file.name.toLowerCase();
+
+      const isPdf =
+        file.type === 'application/pdf' || lowerName.endsWith('.pdf');
+
+      const isSyllabus =
+        lowerName.includes('syllabus') || lowerName.includes('exam');
+
+      reader.onload = (event) => {
+        const result = event.target?.result;
+
+        if (result == null) {
+          reject(new Error('Empty file result'));
+          return;
+        }
+
+        // PDFs: store as data URL in rawData, leave content empty.
+        if (isPdf) {
+          const rawData = typeof result === 'string' ? result : '';
+          const src: Source = {
+            id: nextSourceId + index,
+            name: file.name,
+            type: isSyllabus ? 'Syllabus' : 'Notes',
+            checked: true,
+            filepath: file.name,
+            content: '',      // server will extract text from rawData
+            rawData,
+          };
+          resolve(src);
+        } else {
+          // Non-PDF: treat as plain text like before
+          const text = typeof result === 'string' ? result : '';
+          const src: Source = {
+            id: nextSourceId + index,
+            name: file.name,
+            type: isSyllabus ? 'Syllabus' : 'Notes',
+            checked: true,
+            filepath: file.name,
+            content: text,
+          };
+          resolve(src);
+        }
       };
-      newSources.push(newSource);
+
+      reader.onerror = (error) => reject(error);
+
+      if (isPdf) {
+        // e.g. "data:application/pdf;base64,AAAA..."
+        reader.readAsDataURL(file);
+      } else {
+        reader.readAsText(file);
+      }
     });
-    setSources([...sources, ...newSources]);
-    setNextSourceId(nextSourceId + newSources.length);
-    showNotification(`${files.length} document(s) uploaded and classified!`);
-  };
+
+  Promise.all(fileArray.map(processFile))
+    .then((newSources) => {
+      setSources((prev) => [...prev, ...newSources]);
+      setNextSourceId((prev) => prev + newSources.length);
+      showNotification(`Added ${newSources.length} document(s).`);
+    })
+    .catch((err) => {
+      console.error(err);
+      showNotification('Failed to read one of the files.', true);
+    });
+};
+
+
 
   const generateWithGemini = async (templateId: string) => {
     const selectedSources = sources.filter((s) => s.checked);
@@ -95,7 +153,9 @@ export default function App() {
           sources: selectedSources.map((s) => ({
             name: s.name,
             type: s.type,
+            filepath: s.filepath,
             content: s.content,
+            rawData: s.rawData,   // will be undefined for non-PDFs
           })),
         }),
       });
