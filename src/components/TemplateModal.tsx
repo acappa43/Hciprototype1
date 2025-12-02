@@ -15,14 +15,26 @@ interface TemplateModalProps {
 }
 
 const defaultTemplates = [
-  { id: 1, value: 'flashcards', name: 'Flashcards: Key Terms & Definitions (Ideal for memorization)' },
-  { id: 2, value: 'quiz', name: 'Practice Quiz: Multiple Choice (Ideal for checking comprehension)' },
-  { id: 3, value: 'essay', name: 'Essay Prompts: Generate 3 potential questions (Ideal for argumentative review)' },
-  { id: 4, value: 't-chart', name: 'T-Chart: Compare & Contrast (Ideal for analyzing two concepts)' },
-  { id: 5, value: 'outline', name: 'Hierarchical Outline: Main topics and sub-points (Ideal for structure review)' },
-  { id: 6, value: 'cornell', name: 'Cornell Notes: Cues, Notes, and Summary (Ideal for active recall)' },
-  { id: 7, value: 'heuristics', name: 'Heuristics Guide: Problem-Solving Steps (Specialized for technical topics)' },
+  {
+    id: 1,
+    value: 'study-guide',
+    name: 'General Study Guide: Lesson title, goals, notes, key terms & practice questions (recommended)',
+  },
+  {
+    id: 9,
+    value: 'quiz-test-focus',
+    name: 'Quiz/Test Focus Study Guide: Quiz & test-specific coverage (uses syllabus)',
+  },
+  { id: 2, value: 'flashcards', name: 'Flashcards: Key Terms & Definitions (Ideal for memorization)' },
+  { id: 3, value: 'quiz', name: 'Practice Quiz: Multiple Choice (Ideal for checking comprehension)' },
+  { id: 4, value: 'essay', name: 'Essay Prompts: Generate 3 potential questions (Ideal for argumentative review)' },
+  { id: 5, value: 't-chart', name: 'T-Chart: Compare & Contrast (Ideal for analyzing two concepts)' },
+  { id: 6, value: 'outline', name: 'Hierarchical Outline: Main topics and sub-points (Ideal for structure review)' },
+  { id: 7, value: 'cornell', name: 'Cornell Notes: Cues, Notes, and Summary (Ideal for active recall)' },
+  { id: 8, value: 'heuristics', name: 'Heuristics Guide: Problem-Solving Steps (Specialized for technical topics)' },
 ];
+
+
 
 export function TemplateModal({
   customTemplates,
