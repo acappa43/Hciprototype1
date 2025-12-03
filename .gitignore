@@ -2,3 +2,4 @@ node_modules
 package-lock.json
 build/assets/
 .env
+/back/.env

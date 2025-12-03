@@ -45,6 +45,7 @@ export default function App() {
 
   const [nextSourceId, setNextSourceId] = useState(1);
   const [nextCustomTemplateId, setNextCustomTemplateId] = useState(1);
+  const [loading, setLoading] = useState(false);
 
   const showNotification = (message: string, isError: boolean = false) => {
     setNotification({ message, isError });
@@ -144,6 +145,7 @@ export default function App() {
       return;
     }
 
+    setLoading(true);
     try {
       const res = await fetch('http://localhost:5001/generate', {
         method: 'POST',
@@ -174,6 +176,8 @@ export default function App() {
     } catch (err) {
       console.error(err);
       showNotification('Gemini request failed. Check server.', true);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -221,6 +225,7 @@ export default function App() {
         <MainContent
           sources={sources}
           generatedContent={generatedContent}
+          loading={loading}
           onOpenTemplateModal={() => setTemplateModalOpen(true)}
           onOpenChatModal={() => setChatModalOpen(true)}
           showNotification={showNotification}

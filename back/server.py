@@ -8,6 +8,7 @@ import base64
 from io import BytesIO
 from pypdf import PdfReader
 
+import markdown
 
 load_dotenv()
 
@@ -333,9 +334,12 @@ def generate():
 
     text = response.text or ""
 
+    # Convert markdown to HTML, preserving spacing and line breaks
+    html = markdown.markdown(text)
+
     return jsonify({
         "title": f"{template_id} result",
-        "html": f"<pre>{text}</pre>",
+        "html": html,
         "text": text,
     })
 
