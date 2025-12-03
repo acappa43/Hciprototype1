@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { Volume2, FileText, MessageCircle, ChevronDown } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import type { Source } from '../App';
 import { DefaultStudyContent } from './DefaultStudyContent';
 
@@ -301,9 +303,43 @@ export function MainContent({
           </div>
         ) : (
           (generatedContent ? (
-            <div>
-              <h3 className="text-gray-900 mb-4">{generatedContent.title}</h3>
-              <div dangerouslySetInnerHTML={{ __html: generatedContent.html }} />
+            <div className="markdown-content">
+              {generatedContent.text
+                .replace(/^```markdown\n?/i, '')
+                .replace(/\n?```$/, '')
+                .split('\n').map((line, idx) => {
+                // Heading 1
+                if (line.startsWith('# ') && !line.startsWith('## ')) {
+                  return <h1 key={idx}>{line.substring(2)}</h1>;
+                }
+                // Heading 2
+                if (line.startsWith('## ') && !line.startsWith('### ')) {
+                  return <h2 key={idx}>{line.substring(3)}</h2>;
+                }
+                // Heading 3
+                if (line.startsWith('### ')) {
+                  return <h3 key={idx}>{line.substring(4)}</h3>;
+                }
+                // Bullet list item
+                if (line.trim().startsWith('- ')) {
+                  return <li key={idx} style={{ marginLeft: '20px' }}>{line.trim().substring(2).replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').split('<strong>').map((part, i) => {
+                    if (i === 0) return part;
+                    const [bold, ...rest] = part.split('</strong>');
+                    return <React.Fragment key={i}><strong>{bold}</strong>{rest.join('</strong>')}</React.Fragment>;
+                  })}</li>;
+                }
+                // Empty line
+                if (line.trim() === '') {
+                  return <br key={idx} />;
+                }
+                // Regular paragraph
+                const boldParsed = line.replace(/\*\*(.*?)\*\*/g, '<BOLD>$1</BOLD>');
+                return <p key={idx}>{boldParsed.split('<BOLD>').map((part, i) => {
+                  if (i === 0) return part;
+                  const [bold, ...rest] = part.split('</BOLD>');
+                  return <React.Fragment key={i}><strong>{bold}</strong>{rest.join('</BOLD>')}</React.Fragment>;
+                })}</p>;
+              })}
             </div>
           ) : (
             <DefaultStudyContent />

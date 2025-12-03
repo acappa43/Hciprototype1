@@ -63,6 +63,11 @@ export default function App() {
     showNotification(`All sources ${allChecked ? 'deselected' : 'selected'}.`);
   };
 
+  const deleteSource = (id: number) => {
+    setSources(sources.filter(s => s.id !== id));
+    showNotification('Document deleted.');
+  };
+
   const handleFileUpload = (files: FileList) => {
   const fileArray = Array.from(files);
 
@@ -137,7 +142,7 @@ export default function App() {
 
 
 
-  const generateWithGemini = async (templateId: string) => {
+  const generateWithGemini = async (templateId: string, options: { showLoading?: boolean } = { showLoading: true }) => {
     const selectedSources = sources.filter((s) => s.checked);
 
     if (selectedSources.length === 0) {
@@ -145,9 +150,10 @@ export default function App() {
       return;
     }
 
-    setLoading(true);
+    const { showLoading = true } = options;
+    if (showLoading) setLoading(true);
     try {
-      const res = await fetch('http://localhost:5001/generate', {
+      const res = await fetch('http://localhost:5001/generate_stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -162,22 +168,82 @@ export default function App() {
         }),
       });
 
-      if (!res.ok) {
+      if (!res.ok || !res.body) {
         throw new Error(`HTTP ${res.status}`);
       }
 
-      const data: GeneratedContent = await res.json();
-      setGeneratedContent({
-        title: data.title,
-        html: data.html,
-        text: data.text,
-      });
+      // Initialize generated content so UI has something to append to
+      setGeneratedContent({ title: `${templateId} result`, html: '', text: '' });
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let firstChunkReceived = false;
+      let accumulatedText = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        // Split by newline to handle NDJSON (one JSON object per line)
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const obj = JSON.parse(line);
+            if (obj.error) {
+              throw new Error(obj.error);
+            }
+
+            const textChunk = obj.text || '';
+            accumulatedText += textChunk;
+
+            // Hide loading spinner on first chunk
+            if (!firstChunkReceived && showLoading) {
+              setLoading(false);
+              firstChunkReceived = true;
+            }
+
+            // Update displayed content with accumulated text for streaming preview
+            setGeneratedContent((prev) => {
+              return {
+                title: prev?.title || `${templateId} result`,
+                html: accumulatedText,
+                text: accumulatedText,
+              } as GeneratedContent;
+            });
+          } catch (e) {
+            console.error('Failed to parse stream line', e, line);
+          }
+        }
+      }
+
+      // Handle any trailing buffer
+      if (buffer.trim()) {
+        try {
+          const obj = JSON.parse(buffer);
+          if (!obj.error && obj.text) {
+            accumulatedText += obj.text;
+            setGeneratedContent((prev) => ({
+              title: prev?.title || `${templateId} result`,
+              html: accumulatedText,
+              text: accumulatedText,
+            } as GeneratedContent));
+          }
+        } catch (e) {
+          console.error('Failed to parse trailing buffer', e, buffer);
+        }
+      }
+
       showNotification(`Generated with Gemini (${templateId}).`);
     } catch (err) {
       console.error(err);
       showNotification('Gemini request failed. Check server.', true);
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
   };
 
@@ -220,6 +286,7 @@ export default function App() {
           onToggleSource={toggleSource}
           onToggleSelectAll={toggleSelectAll}
           onFileUpload={handleFileUpload}
+          onDeleteSource={deleteSource}
         />
         
         <MainContent

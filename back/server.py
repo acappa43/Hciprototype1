@@ -1,5 +1,5 @@
 import os
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response, stream_with_context
 from flask_cors import CORS
 from google import genai
 from dotenv import load_dotenv
@@ -9,6 +9,7 @@ from io import BytesIO
 from pypdf import PdfReader
 
 import markdown
+import json
 
 load_dotenv()
 
@@ -56,44 +57,11 @@ def extract_text_from_pdf_dataurl(data_url: str) -> str:
         print("PDF extract error:", e)
         return ""
 
-@app.route("/generate", methods=["POST"])
-def generate():
-    data = request.get_json(force=True)
-    template_id = data.get("templateId", "generic")
-    sources = data.get("sources", [])
 
-
-    docs_text = ""
-    for s in sources:
-        name = s.get("name")
-        doc_type = s.get("type")
-        filepath = (s.get("filepath") or "").lower()
-        content = s.get("content") or ""
-        raw_data = s.get("rawData") or s.get("raw_data")
-
-        # Start with whatever plain content we have
-        text = content
-
-        # If we have rawData (from a PDF), try to extract text from it
-        if raw_data:
-            pdf_text = extract_text_from_pdf_dataurl(raw_data)
-            if pdf_text:
-                text = pdf_text
-
-        docs_text += f"\n\n### {name} ({doc_type})\n{text}\n"
-
-
-    if not docs_text.strip():
-        return jsonify({
-            "title": "No documents selected",
-            "html": "<p>Please upload and select at least one document.</p>",
-            "text": "Please upload and select at least one document."
-        })
-
+def build_prompt(template_id: str, docs_text: str) -> str:
+    """Build the template-specific prompt for Gemini."""
     template_key = (template_id or "").lower().strip()
 
-    # Decide instructions based on template
-    # Decide instructions based on template
     if "flashcard" in template_key:
         template_instructions = """
         Create Q/A flashcards:
@@ -101,44 +69,104 @@ def generate():
         - Group related cards together.
         - Keep wording simple and student-friendly.
         """
-
-    # NEW: quiz / test-focused study guide (uses syllabus + notes)
-    elif "quiz-test" in template_key or "quiz_test" in template_key:
+    elif "quiz-test" in template_key or "quiz_test" in template_key or template_id == "quiz-test-focus":
         template_instructions = """
         Create a QUIZ / TEST FOCUSED STUDY GUIDE using ONLY information from the documents.
 
-        1. QUIZ / TEST OVERVIEW
-           - List each quiz/test you can identify in the syllabus (name, approximate date, percentage if given).
-           - For each, restate the coverage in your own words
-             (e.g., "Lectures 3–5: Heuristic evaluation and cognitive walkthroughs").
+        Treat the documents as three roles:
+        - Syllabus-type documents: overall coverage, dates, and percentage weights.
+        - Rubric-type documents: per-question or per-section info (what each question is about, how many points or what percentage it is worth, and how it will be graded).
+        - Notes / readings: detailed explanations and examples.
 
-        2. WHAT TO KNOW FOR THE NEXT QUIZ / TEST
-           - For the first upcoming quiz/test you see, list 5–12 must-know concepts, definitions, or procedures.
-           - Group them under small headings (for example: "Heuristics", "Walkthrough Steps", "Types of Evaluation").
+        IMPORTANT:
+        - If a document name or heading contains words like "Rubric" or "Grading", treat it as a Rubric.
+        - Do NOT make up questions or weights that are not clearly implied by the rubric or syllabus.
+        - Do NOT merge multiple rubric questions into one; keep each rubric question separate when possible.
 
-        3. HIGH-YIELD CONNECTIONS & PITFALLS
-           - Short bullets that connect ideas and point out common confusions or tricky distinctions.
+        Your output MUST be structured with these exact sections and headings:
 
-        4. QUICK PRACTICE
-           - 3–5 practice questions that match the styles mentioned in the syllabus (MC, short answer, etc. if described).
-           - At the very end, include a clearly labeled ANSWER KEY.
+        ## QUIZ / TEST FOCUSED STUDY GUIDE
 
-        Pay special attention to phrases like "Quiz", "Test", "Exam", "coverage", and "learning objectives"
-        in syllabus-type documents when deciding what belongs.
+        ### 1. ASSESSMENT CATALOG
+        - List each quiz / test / exam you can identify, in order.
+        - For each, give:
+        - Name (e.g., "Quiz 1", "Test 1", "Final Exam")
+        - Type (quiz, test, exam)
+        - Weight or points (from the syllabus, if available)
+        - Short one-line description of coverage in your own words
+            (for example: "Lessons 2.1â€“2.3 on needfinding and interviews").
+
+        ### 2. PER-ASSESSMENT GUIDE (ONE SUBSECTION PER QUIZ/TEST)
+
+        For EACH assessment you found in Section 1, create a subsection like:
+
+        #### [Assessment Name] â€” [Weight or Points] â€” [Coverage]
+
+        1. **Format Overview**
+        - Describe the format based on the rubric and syllabus:
+            - question types (MC, multi-correct, short answer, essay, etc.)
+            - how many of each type, if stated
+            - any special rules (partial credit, "select all that apply", etc.).
+
+        2. **Question-by-Question / Section Breakdown**
+        - If the rubric lists individual questions or parts (e.g., "Q1: Mental models (10 pts)"):
+            - Create a list where EACH bullet corresponds to a rubric question or question group:
+            - Question label (e.g., "Q1", "Q2aâ€“Q2c", "Section A MC #1â€“10").
+            - Topic or skill (what this question is about).
+            - Points or percentage weight.
+            - The most relevant lessons/readings or course topics that support this question.
+        - If the rubric does NOT list questions individually:
+            - Group by rubric sections (e.g., "Short Answer Section", "Application Questions") and give topic + approximate weight.
+
+        3. **What to Know for This Assessment**
+        - 5â€“12 bullet points of must-know ideas for THIS specific quiz/test.
+        - Organize them into small themed groups (e.g., "Core Definitions", "Process Steps", "Distinctions to Remember").
+        - For each idea, briefly say which rubric question(s) or section it supports.
+
+        ### 3. SAMPLE QUESTIONS BY ASSESSMENT
+
+        For EACH quiz/test again (separate clearly):
+
+        #### Sample Questions for [Assessment Name]
+
+        - Create 2â€“4 sample questions that match the actual rubric:
+        - If rubric emphasizes MC / multi-correct, make mostly MC / multi-correct.
+        - If rubric emphasizes short answer, make short answer prompts that match the topics.
+        - Under each sample question, add a short line:
+        - "Aligned rubric topic: [rubric topic or question label]"
+        - At the end of this section, include a short ANSWER KEY:
+        - For MC / multi-correct: which options are correct + one-line justification.
+        - For short answer: what a good answer MUST include (key concepts or phrases).
+
+        ### 4. POSSIBLE EXAM CONTENTS & FOCUS AREAS
+
+        For EACH assessment:
+
+        #### Likely Focus for [Assessment Name]
+
+        - 4â€“8 bullet points of likely focus areas, based only on the syllabus + rubric:
+        - Key concepts that appear multiple times in learning objectives or rubric rows.
+        - Skills that are explicitly named in rubric criteria (e.g., "justify", "compare", "apply").
+        - Phrase them as "likely focus" (e.g., "Likely focus: being able to compare X vs Y") to avoid pretending to know exact questions.
+
+        ### 5. STUDY CHECKLIST
+
+        - A short checklist the student can literally tick off while studying, for all quizzes/tests combined.
+        - Each item should be concrete and observable (e.g., "I can explain the difference between usefulness and usability with my own example", not just "Understand usefulness").
+
+        Pay special attention to:
+        - Any rubric that describes each question or section: always connect your guide back to those questions and weights.
+        - The syllabus for which units/readings are attached to each quiz/test.
+        - The notes for the actual explanations and examples.
+
+        Do NOT invent new grading rules, topics, or question types that are not clearly suggested by the documents.
         """
-
-    # NEW: exam preview / practice exam
     elif "exam-preview" in template_key:
         template_instructions = """
         Create an EXAM PREVIEW that feels like a realistic practice exam.
 
-        - Start with one line describing what this exam preview targets
-          (for example: "Practice exam for Quiz 3: Needfinding & Interviews").
-
         SECTION A: MULTIPLE CHOICE (4–6 questions)
         - Each question has options A–D.
-        - Some questions may have MORE THAN ONE correct answer.
-          When that happens, clearly say "Select all that apply."
 
         SECTION B: SHORT ANSWER (2–3 questions)
         - Open-ended questions that require a 2–5 sentence response.
@@ -146,17 +174,8 @@ def generate():
         SECTION C: MINI ESSAY (1 question)
         - Ask for a paragraph-length explanation applying concepts to a realistic scenario.
 
-        At the end, include:
-
-        ANSWER KEY
-        - For MC questions: list the correct letter(s) and 1–2 short justification bullets.
-        - For short answer / essay: list what a good answer MUST include (not word-for-word).
-
-        Keep all content tightly tied to the actual documents.
-        Do not introduce outside topics.
+        At the end, include ANSWER KEY with correct letters and 1–2 justification bullets.
         """
-
-    # NEW: after-action review / feedback
     elif "after-action" in template_key or "afteraction" in template_key:
         template_instructions = """
         Create an AFTER-ACTION REVIEW guide for a student who just took a quiz or test.
@@ -165,86 +184,53 @@ def generate():
            - A short paragraph reminding the student what this quiz/test mainly tried to assess.
 
         2. KEY QUESTIONS WITH MODEL ANSWERS
-           - 3–5 especially important questions (mix of MC stems, short answers, or conceptual prompts).
-           - After each question, provide:
-             - "MODEL ANSWER:" followed by a clear ideal answer.
-             - 2–3 bullets under "WHY THIS IS CORRECT".
+           - 3–5 especially important questions.
+           - For each, provide: "MODEL ANSWER:" followed by the ideal answer, then WHY THIS IS CORRECT bullets.
 
         3. SELF-CHECK PROMPTS
-           - After each model answer, add bullets like:
-             - "If you missed this..."
-             - "To fix this next time..."
-           - Make the advice concrete and actionable (e.g., "re-watch Lecture 3 up through the Gulf of Execution example").
+           - After each model answer, add bullets like: "If you missed this...", "To fix this next time..."
 
         4. SOURCE HINTS
-           - For each question, add a final line starting with "Source hint:"
-             and point back to where in the documents the idea came from
-             (for example, a heading or phrase like "Lecture: Gulf of Execution",
-              "Syllabus: Quiz 3 coverage", or "HCI Notes — section on heuristic evaluation").
-
-        This guide is NOT grading any specific student's answer; it is a reflection worksheet
-        that lets a student compare their own answers to the model.
+           - For each question, add a line starting with "Source hint:" and point back to document section.
         """
-
-    # NEW: pacing planner
     elif "pacing" in template_key or "study-pacing" in template_key:
         template_instructions = """
         Create a STUDY PACING PLAN that turns syllabus deadlines into an actual time plan.
 
         1. CONTEXT
            - Name the quiz/test this plan is for and its date if visible.
-             If no date is given, just say "upcoming quiz/test" and describe the coverage.
 
         2. TIME BUDGET
-           - Suggest a realistic total amount of time to spend (for example: "about 3–4 hours").
-           - Break it into small chunks (e.g., "3 × 25-minute blocks" or "4 sessions of 30 minutes").
+           - Suggest a realistic total amount of time (e.g., "about 3–4 hours").
+           - Break it into small chunks (e.g., "3 × 25-minute blocks").
 
         3. SESSION-BY-SESSION PLAN
-           - Use a bullet list or simple table where each row is a study session:
-             - Session #
-             - Focus topics
-             - Suggested minutes
-             - Suggested strategy (flashcards, outlining, practice questions, etc.).
-           - Start with fundamentals first, then move into practice/review in later sessions.
+           - Use a bullet list where each row is a study session: Session #, Focus topics, Suggested minutes, Strategy.
 
         4. CHECKPOINTS
-           - 2–3 self-check prompts or mini tasks (for example, "Explain the Gulf of Execution in your own words"
-             or "Write down the steps of a cognitive walkthrough from memory").
-
-        If there is no explicit date, still create a generic 3–5 session plan based on how much material there is.
+           - 2–3 self-check prompts or mini tasks.
         """
-
-    # NEW: course overview / dashboard style
     elif "dashboard" in template_key or "course-overview" in template_key:
         template_instructions = """
         Create a COURSE OVERVIEW / DASHBOARD style summary.
 
         1. COURSE SNAPSHOT
-           - Course title (if visible) and a one-sentence description.
-           - List major assessment types (quizzes, tests, projects) with their weights
-             if the syllabus includes them.
+           - Course title and a one-sentence description.
+           - List major assessment types (quizzes, tests, projects) with their weights if available.
 
         2. TOPIC MAP
            - A bullet list or simple table of Units/Topics and which assessments they feed into.
-           - For each topic, label emphasis as High / Medium / Light based on:
-             - how often it appears in the notes/syllabus
-             - whether it is explicitly named in learning objectives or test coverage.
+           - Label emphasis as High / Medium / Light based on documents.
 
         3. ASSESSMENT TIMELINE
            - Ordered list of quizzes/tests with approximate dates and covered topics.
 
         4. RUBRIC & EXPECTATIONS HIGHLIGHTS
-           - 4–8 bullets summarising what "good work" looks like in this course
-             (e.g., completeness, clear justification, human-centered reasoning).
+           - 4–8 bullets summarising what "good work" looks like in this course.
 
         5. KEY TERMS TO TRACK
-           - Short bullet list of especially important vocabulary to watch for through the course.
-
-        All labels and emphasis must be inferred from the documents.
-        Do NOT invent new grading rules or topics that are not mentioned.
+           - Short bullet list of especially important vocabulary.
         """
-
-    # Existing quiz template (generic practice quiz)
     elif "quiz" in template_key:
         template_instructions = """
         Create a short practice quiz:
@@ -252,48 +238,20 @@ def generate():
         - Each question has 4 options (A–D).
         - At the end, include a clearly labeled Answer Key with the correct option for each question.
         """
-
-    # Existing general study guide
     elif template_key == "study-guide":
-        # Special "General Study Guide" format (matches your HTML sample)
         template_instructions = """
         Create a detailed general study guide using this structure and ALL CAPS section headings:
 
-        1. LESSON TITLE
-           - A short, clear title summarizing the main topic.
-
-        2. SOURCES
-           - Brief bullets or a short paragraph listing key sources you can infer from the documents
-             (author, year, title, etc.), if possible.
-
-        3. LEARNING GOALS & OUTCOMES
-           - 3–6 bullet points stating what the student should know or be able to do after studying.
-
-        4. STUDY NOTES
-           - 2–4 short paragraphs explaining the core ideas in plain language, like lecture notes.
-           - Focus on the most important patterns, principles, or steps.
-
-        5. DEFINITIONS & TERMS
-           - Bullet list.
-           - Each bullet starts with the term in **bold**, followed by a concise definition.
-
-        6. CORE CONCEPTS TO KNOW
-           - 2–4 subsections with short headings and supporting bullets or short paragraphs that connect ideas.
-           - Emphasize trade-offs, relationships, and "why it matters" explanations.
-
-        7. CHEAT SHEET (QUICK REFERENCE)
-           - A compact, high-yield list of key points, formulas, heuristics, or rules of thumb.
-           - Think of this as a one-glance summary for last-minute review.
-
-        8. PRACTICE QUESTIONS
-           - A mix of a few multiple-choice and short-answer/short-response questions.
-           - At the very end, include a clearly labeled ANSWER KEY.
-
-        Use clear headings and bullet points in a student-facing tone.
+        1. LESSON TITLE - A short, clear title summarizing the main topic.
+        2. SOURCES - Brief bullets listing key sources you can infer from the documents.
+        3. LEARNING GOALS & OUTCOMES - 3–6 bullet points.
+        4. STUDY NOTES - 2–4 short paragraphs explaining core ideas in plain language.
+        5. DEFINITIONS & TERMS - Bullet list with term in **bold** and concise definition.
+        6. CORE CONCEPTS TO KNOW - 2–4 subsections with supporting bullets.
+        7. CHEAT SHEET (QUICK REFERENCE) - Compact, high-yield list of key points.
+        8. PRACTICE QUESTIONS - Mix of multiple-choice and short-answer questions with ANSWER KEY.
         """
-
     else:
-        # Generic study guide fallback
         template_instructions = """
         Create a structured study guide with:
         - A title.
@@ -303,9 +261,6 @@ def generate():
         - 3–5 practice questions at the end with answers.
         """
 
-
-
-    # Final prompt sent to Gemini
     prompt = f"""
     You are a helpful study assistant.
 
@@ -313,35 +268,76 @@ def generate():
     
     Important:
         - Do NOT make up or guess facts that are not clearly supported by the documents.
-        - If the documents don’t specify something, leave it out or say that it is not specified.
+        - If the documents don't specify something, leave it out or say that it is not specified.
+        - Use proper markdown formatting with blank lines between sections and list items.
+        - Use a single blank line between paragraphs or list items for proper spacing.
 
     Based ONLY on the documents below, create a study resource that matches these instructions:
 
     {template_instructions}
 
-    Return only the final student-facing content (plain text or markdown) with no extra explanation,
-    no system messages, and no commentary about what you are doing.
+    Return only the final student-facing content in markdown format with proper spacing.
+    Use blank lines between sections and list items.
+    Do not add extra blank lines or excessive spacing.
 
     DOCUMENTS:
     {docs_text}
     """
+    return prompt
 
 
-    response = client.models.generate_content(
-        model=MODEL,
-        contents=prompt,
-    )
+@app.route("/generate_stream", methods=["POST"])
+def generate_stream():
+    """Stream generation endpoint that yields NDJSON."""
+    try:
+        data = request.get_json(force=True)
+        template_id = data.get("templateId", "generic")
+        sources = data.get("sources", [])
 
-    text = response.text or ""
+        docs_text = ""
+        for s in sources:
+            name = s.get("name")
+            doc_type = s.get("type")
+            content = s.get("content") or ""
+            raw_data = s.get("rawData") or s.get("raw_data")
 
-    # Convert markdown to HTML, preserving spacing and line breaks
-    html = markdown.markdown(text)
+            text = content
+            if raw_data:
+                pdf_text = extract_text_from_pdf_dataurl(raw_data)
+                if pdf_text:
+                    text = pdf_text
 
-    return jsonify({
-        "title": f"{template_id} result",
-        "html": html,
-        "text": text,
-    })
+            docs_text += f"\n\n### {name} ({doc_type})\n{text}\n"
+
+        if not docs_text.strip():
+            return jsonify({
+                "title": "No documents selected",
+                "html": "<p>Please upload and select at least one document.</p>",
+                "text": "Please upload and select at least one document."
+            })
+
+        prompt = build_prompt(template_id, docs_text)
+
+        def stream_gen():
+            try:
+                response = client.models.generate_content_stream(
+                    model=MODEL,
+                    contents=prompt,
+                )
+                for chunk in response:
+                    if hasattr(chunk, 'text') and chunk.text:
+                        text_chunk = chunk.text
+                        payload = {"text": text_chunk}
+                        yield json.dumps(payload) + "\n"
+            except Exception as e:
+                print(f"Stream generation error: {e}")
+                err = {"error": str(e)}
+                yield json.dumps(err) + "\n"
+
+        return Response(stream_with_context(stream_gen()), content_type='application/x-ndjson')
+    except Exception as e:
+        print(f"Route error: {e}")
+        return jsonify({"title": "Generation failed", "html": "", "text": "", "error": str(e)}), 500
 
 
 if __name__ == "__main__":
