@@ -11,6 +11,26 @@ interface MainContentProps {
   showNotification: (message: string, isError?: boolean) => void;
 }
 
+// Helper to download a Blob as a file
+const downloadFile = (filename: string, mimeType: string, content: string) => {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+};
+
+// Helper to strip HTML tags for plain-text exports
+const htmlToPlainText = (html: string): string => {
+  const div = document.createElement('div');
+  div.innerHTML = html;
+  return div.textContent || div.innerText || '';
+};
+
 export function MainContent({
   sources,
   generatedContent,
@@ -24,11 +44,105 @@ export function MainContent({
 
   const handleSaveAs = (format: string) => {
     setSaveMenuOpen(false);
-    if (format === 'Print') {
-      showNotification('Opening print dialogue...');
-      window.print();
-    } else {
-      showNotification(`Simulating save to **${format}**. Content saved locally as a **.txt** file.`);
+
+    if (!generatedContent) {
+      showNotification('Please generate a study guide first.', true);
+      return;
+    }
+
+    // Build base filename from the generated title
+    const baseFileName =
+      (generatedContent.title || 'study-guide')
+        .replace(/[\\/:*?"<>|]+/g, '')
+        .trim() || 'study-guide';
+
+    const innerHtml =
+      generatedContent.html ||
+      `<pre>${generatedContent.text || ''}</pre>`;
+
+    const fullHtml =
+      `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${baseFileName}</title></head><body>` +
+      innerHtml +
+      '</body></html>';
+
+    const plainText =
+      generatedContent.text ||
+      htmlToPlainText(generatedContent.html || '');
+
+    switch (format) {
+      case 'Word':
+        // Simple approach: HTML content with .docx extension (Word will open it)
+        downloadFile(
+          `${baseFileName}.docx`,
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          fullHtml
+        );
+        showNotification('Downloading Word document…');
+        break;
+
+      case 'PDF': {
+        // Use browser print dialog → user can choose "Save as PDF"
+        const printWindow = window.open('', '_blank');
+        if (!printWindow) {
+          showNotification('Popup blocked. Allow popups to save as PDF.', true);
+          return;
+        }
+        printWindow.document.open();
+        printWindow.document.write(fullHtml);
+        printWindow.document.close();
+        printWindow.focus();
+        setTimeout(() => {
+          printWindow.print();
+        }, 300);
+        showNotification('Opening print dialog. Choose "Save as PDF" in your browser.');
+        break;
+      }
+
+      case 'Markdown':
+        downloadFile(
+          `${baseFileName}.md`,
+          'text/markdown;charset=utf-8',
+          plainText
+        );
+        showNotification('Downloading Markdown file…');
+        break;
+
+      case 'Excel':
+        // Demo-level export: plain text with .xlsx extension
+        downloadFile(
+          `${baseFileName}.xlsx`,
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          plainText
+        );
+        showNotification('Downloading Excel-style file (text content)…');
+        break;
+
+      case 'PowerPoint':
+        // Demo-level export: plain text with .pptx extension
+        downloadFile(
+          `${baseFileName}.pptx`,
+          'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+          plainText
+        );
+        showNotification('Downloading PowerPoint-style file (text content)…');
+        break;
+
+      case 'HTML':
+        downloadFile(
+          `${baseFileName}.html`,
+          'text/html;charset=utf-8',
+          fullHtml
+        );
+        showNotification('Downloading HTML file…');
+        break;
+
+      case 'Print':
+        showNotification('Opening print dialogue...');
+        window.print();
+        break;
+
+      default:
+        showNotification('Unknown export format.', true);
     }
   };
 
@@ -47,6 +161,23 @@ export function MainContent({
           {/* Audio Button */}
           <button
             disabled={!hasContent}
+            onClick={() => {
+              if (!generatedContent) return;
+              const text =
+                generatedContent.text ||
+                htmlToPlainText(generatedContent.html || '');
+              if (!text) {
+                showNotification('Nothing to read out loud yet.', true);
+                return;
+              }
+              try {
+                const utterance = new SpeechSynthesisUtterance(text);
+                window.speechSynthesis.cancel();
+                window.speechSynthesis.speak(utterance);
+              } catch (e) {
+                showNotification('Audio is not supported in this browser.', true);
+              }
+            }}
             className={`px-4 py-2 rounded-lg transition duration-150 shadow-md flex items-center ${
               hasContent
                 ? 'bg-green-500 text-white hover:bg-green-600'
@@ -79,7 +210,7 @@ export function MainContent({
           <div className="relative inline-block text-left">
             <button
               disabled={!hasContent}
-              onClick={() => setSaveMenuOpen(!saveMenuOpen)}
+              onClick={() => hasContent && setSaveMenuOpen(!saveMenuOpen)}
               className={`px-4 py-2 rounded-lg transition duration-150 shadow-md flex items-center ${
                 hasContent
                   ? 'bg-gray-200 text-gray-700 hover:bg-gray-300'
